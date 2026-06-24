@@ -3,6 +3,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
 
 load_dotenv()
 
@@ -38,7 +39,6 @@ def login():
         cur.close()
         conn.close()
         
-        # Validación temporal/fija para el administrador configurado
         if usuario and (password == 'admin123'):
             session['usuario_id'] = usuario['id_usuario']
             session['usuario_nombre'] = usuario['nombre']
@@ -58,17 +58,91 @@ def alertas():
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
-    cur.execute("SELECT * FROM vista_alertas_prestamos ORDER BY fecha_devolucion_esperada ASC;")
+    # Obtener alertas de la vista
+    cur.execute("SELECT * FROM vista_alertas_prestamos ORDER BY fecha_entregado IS NOT NULL, fecha_devolucion_esperada ASC;")
     alertas_list = cur.fetchall()
+    
+    # Obtener listas para los desplegables del formulario modal
+    cur.execute("SELECT id_libro, titulo FROM libros WHERE stock > 0 ORDER BY titulo ASC;")
+    libros_list = cur.fetchall()
+    
+    cur.execute("SELECT id_usuario, nombre FROM usuarios ORDER BY nombre ASC;")
+    usuarios_list = cur.fetchall()
     
     cur.close()
     conn.close()
     
-    return render_template('alertas.html', alertas=alertas_list)
+    return render_template('alertas.html', alertas=alertas_list, libros=libros_list, usuarios=usuarios_list)
 
 # ==========================================
-# ENDPOINT API PARA GENERAR LAS VISUALIZACIONES
+# ACCIÓN: REGISTRAR NUEVO PRÉSTAMO (INSERT)
 # ==========================================
+@app.route('/registrar_prestamo', methods=['POST'])
+def registrar_prestamo():
+    if 'usuario_id' not in session:
+        return redirect(url_for('login'))
+        
+    id_libro = request.form['id_libro']
+    id_usuario = request.form['id_usuario']
+    dias_prestamo = int(request.form['dias_prestamo'])
+    
+    fecha_prestamo = datetime.now().date()
+    fecha_devolucion = fecha_prestamo + timedelta(days=dias_prestamo)
+    
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Insertar préstamo
+        cur.execute("""
+            INSERT INTO prestamos (id_libro, id_usuario, fecha_prestamo, fecha_devolucion_esperada, fecha_entregado)
+            VALUES (%s, %s, %s, %s, NULL);
+        """, (id_libro, id_usuario, fecha_prestamo, fecha_devolucion))
+        
+        # Restar 1 al stock del libro
+        cur.execute("UPDATE libros SET stock = stock - 1 WHERE id_libro = %s;", (id_libro,))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        flash("🚀 Préstamo registrado con éxito y stock actualizado.", "success")
+    except Exception as e:
+        flash(f"❌ Error al registrar préstamo: {str(e)}", "danger")
+        
+    return redirect(url_for('alertas'))
+
+# ==========================================
+# ACCIÓN: MARCAR COMO ENTREGADO (UPDATE)
+# ==========================================
+@app.route('/entregar_prestamo/<int:id_prestamo>')
+def entregar_prestamo(id_prestamo):
+    if 'usuario_id' not in session:
+        return redirect(url_for('login'))
+        
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Obtener el id_libro antes de actualizar para devolverlo al stock
+        cur.execute("SELECT id_libro FROM prestamos WHERE id_prestamo = %s;", (id_prestamo,))
+        res = cur.fetchone()
+        
+        if res:
+            id_libro = res[0]
+            # Colocar fecha de entrega (hoy)
+            cur.execute("UPDATE prestamos SET fecha_entregado = CURRENT_DATE WHERE id_prestamo = %s;", (id_prestamo,))
+            # Devolver 1 al stock del libro
+            cur.execute("UPDATE libros SET stock = stock + 1 WHERE id_libro = %s;", (id_libro,))
+            conn.commit()
+            flash("✔ Libro devuelto correctamente. El stock ha sido restaurado.", "success")
+            
+        cur.close()
+        conn.close()
+    except Exception as e:
+        flash(f"❌ Error al devolver libro: {str(e)}", "danger")
+        
+    return redirect(url_for('alertas'))
+
 @app.route('/api/estadisticas')
 def api_estadisticas():
     if 'usuario_id' not in session:
@@ -77,7 +151,6 @@ def api_estadisticas():
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
-    # 1. Libros más prestados
     cur.execute("""
         SELECT l.titulo AS libro, COUNT(p.id_prestamo) AS total
         FROM prestamos p
@@ -88,7 +161,6 @@ def api_estadisticas():
     """)
     libros_mas_prestados = cur.fetchall()
     
-    # 2. Préstamos por tipo de usuario
     cur.execute("""
         SELECT u.tipo_usuario, COUNT(p.id_prestamo) AS total
         FROM prestamos p
