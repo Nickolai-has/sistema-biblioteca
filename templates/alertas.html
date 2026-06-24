@@ -1,59 +1,178 @@
-{% extends 'base.html' %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Control - Alertas de Préstamos</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.bootstrap5.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f4f6f9; font-family: sans-serif; }
+        .navbar-brand { font-weight: bold; }
+        .card { border: none; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-radius: 10px; margin-bottom: 25px; }
+        .badge-vencido { background-color: #dc3545; }
+        .badge-por-vencer { background-color: #ffc107; color: #000; }
+        .badge-en-tiempo { background-color: #198754; }
+        .badge-devuelto { background-color: #6c757d; }
+        @media print {
+            .no-print, .dataTables_filter, .dt-buttons, .dataTables_length, .dataTables_paginate { display: none !important; }
+            .card { box-shadow: none; }
+        }
+    </style>
+</head>
+<body>
 
-{% block content %}
-<div class="container mt-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>Panel de Control: Alertas de Préstamos</h2>
-        <div class="text-end">
-            <span class="badge bg-success">En tiempo</span>
-            <span class="badge bg-warning text-dark">Por vencer (3 días o menos)</span>
-            <span class="badge bg-danger">Vencido</span>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark no-print">
+        <div class="container">
+            <span class="navbar-brand">📚 Red de Bibliotecas</span>
+            <div class="ms-auto">
+                <span class="text-light me-3">Hola, {{ session['usuario_nombre'] }}</span>
+                <a href="{{ url_for('logout') }}" class="btn btn-outline-danger btn-sm">Cerrar Sesión</a>
+            </div>
         </div>
-    </div>
+    </nav>
 
-    <div class="card shadow">
-        <div class="card-body">
-            <div class="table-responsive">
-                <table class="table table-striped table-hover align-middle">
-                    <thead class="table-dark">
-                        <tr>
-                            <th>ID</th>
-                            <th>Usuario / Lector</th>
-                            <th>Libro Prestado</th>
-                            <th>Fecha Préstamo</th>
-                            <th>Fecha Máxima Devolución</th>
-                            <th>Estado</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for alerta in alertas %}
-                        <tr>
-                            <td>{{ alerta.id_prestamo }}</td>
-                            <td><strong>{{ alerta.usuario }}</strong></td>
-                            <td>{{ alerta.libro }}</td>
-                            <td>{{ alerta.fecha_prestamo }}</td>
-                            <td>{{ alerta.fecha_devolucion_esperada }}</td>
-                            <td>
-                                {% if alerta.estado_prestamo == 'Vencido' %}
-                                    <span class="badge bg-danger p-2 w-100">❌ Vencido</span>
-                                {% elif alerta.estado_prestamo == 'Por vencer' %}
-                                    <span class="badge bg-warning text-dark p-2 w-100">⚠️ Por vencer</span>
-                                {% elif alerta.estado_prestamo == 'Devuelto' %}
-                                    <span class="badge bg-secondary p-2 w-100">✔ Devuelto</span>
-                                {% else %}
-                                    <span class="badge bg-success p-2 w-100">⏱ En tiempo</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="6" class="text-center text-muted py-4">No hay registros de préstamos en el sistema actualmente.</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+    <div class="container mt-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category if category != 'danger' else 'danger' }} alert-dismissible fade show no-print" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <h1 class="mb-4 text-center text-secondary font-weight-bold">Panel de Control: Alertas de Préstamos</h1>
+
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card p-3">
+                    <h5 class="card-title text-center text-muted">📊 Libros más Prestados</h5>
+                    <canvas id="chartLibros" height="150"></canvas>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card p-3">
+                    <h5 class="card-title text-center text-muted">👥 Préstamos por Tipo de Usuario</h5>
+                    <canvas id="chartUsuarios" height="150"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table id="tablaAlertas" class="table table-striped table-hover align-middle" style="width:100%">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>ID</th>
+                                <th>Usuario / Lector</th>
+                                <th>Libro Prestado</th>
+                                <th>Fecha Préstamo</th>
+                                <th>Fecha Máxima Devolución</th>
+                                <th>Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for alerta in alertas %}
+                            <tr>
+                                <td>{{ alerta.id_prestamo }}</td>
+                                <td><strong>{{ alerta.usuario }}</strong></td>
+                                <td>{{ alerta.libro }}</td>
+                                <td>{{ alerta.fecha_prestamo }}</td>
+                                <td>{{ alerta.fecha_devolucion_esperada }}</td>
+                                <td>
+                                    {% if alerta.estado_prestamo == 'Vencido' %}
+                                        <span class="badge badge-vencido p-2">🚨 Vencido</span>
+                                    {% elif alerta.estado_prestamo == 'Por vencer' %}
+                                        <span class="badge badge-por-vencer p-2">⚠️ Por vencer</span>
+                                    {% elif alerta.estado_prestamo == 'Devuelto' %}
+                                        <span class="badge badge-devuelto p-2">✔ Devuelto</span>
+                                    {% else %}
+                                        <span class="badge badge-en-tiempo p-2">⏱ En tiempo</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
-</div>
-{% endblock %}
+
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.4.2/js/dataTables.buttons.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.bootstrap5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.html5.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.print.min.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+        $(document).ready(function() {
+            // Inicializar Tabla con buscador, filtros y función de impresión de reporte completo
+            $('#tablaAlertas').DataTable({
+                "language": {
+                    "url": "//cdn.datatables.net/plug-ins/1.13.6/i18n/es-MX.json"
+                },
+                dom: 'Bfrtip',
+                buttons: [
+                    {
+                        extend: 'print',
+                        text: '🖨️ Imprimir Reporte Completo',
+                        className: 'btn btn-primary mb-3',
+                        title: 'Reporte Oficial de Alertas de Préstamos - Sistema Bibliotecario'
+                    },
+                    {
+                        extend: 'excel',
+                        text: '📊 Exportar a Excel',
+                        className: 'btn btn-success mb-3'
+                    }
+                ],
+                pageLength: 10
+            });
+
+            // Consumir la API y renderizar los gráficos automáticamente
+            $.getJSON('/api/estadisticas', function(data) {
+                // Gráfica 1: Libros más prestados (Barras)
+                const ctxLibros = document.getElementById('chartLibros').getContext('2d');
+                new Chart(ctxLibros, {
+                    type: 'bar',
+                    data: {
+                        labels: data.libros.map(item => item.libro),
+                        datasets: [{
+                            label: 'Cantidad de Préstamos',
+                            data: data.libros.map(item => item.total),
+                            backgroundColor: '#0d6efd',
+                            borderRadius: 5
+                        }]
+                    },
+                    options: { scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+                });
+
+                // Gráfica 2: Préstamos por tipo de usuario (Dona)
+                const ctxUsuarios = document.getElementById('chartUsuarios').getContext('2d');
+                new Chart(ctxUsuarios, {
+                    type: 'doughnut',
+                    data: {
+                        labels: data.usuarios.map(item => item.tipo_usuario),
+                        datasets: [{
+                            data: data.usuarios.map(item => item.total),
+                            backgroundColor: ['#198754', '#ffc107', '#dc3545']
+                        }]
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>
