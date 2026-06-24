@@ -77,5 +77,38 @@ def logout():
     flash("Sesión cerrada correctamente.", "info")
     return redirect(url_for('login'))
 
+# ==========================================
+# RUTA REPARADORA DE CREDENCIALES EN PRODUCTION
+# ==========================================
+@app.route('/crear-admin-fijo')
+def crear_admin_fijo():
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Generar el hash usando la librería exacta de Render
+        nuevo_hash = generate_password_hash('admin123')
+        
+        # Limpiar registros previos del administrador
+        cur.execute("DELETE FROM credenciales WHERE id_usuario = 1;")
+        cur.execute("DELETE FROM usuarios WHERE id_usuario = 1;")
+        
+        # Insertar el usuario y su credencial con el hash nativo
+        cur.execute("""
+            INSERT INTO usuarios (id_usuario, nombre, correo, tipo_usuario) 
+            VALUES (1, 'Administrador Principal', 'admin@biblioteca.com', 'Administrador');
+        """)
+        cur.execute("""
+            INSERT INTO credenciales (id_usuario, password_hash) 
+            VALUES (1, %s);
+        """, (nuevo_hash,))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        return "🚀 ¡Usuario Administrador creado con éxito con el hash nativo del servidor!"
+    except Exception as e:
+        return f"❌ Error: {str(e)}"
+
 if __name__ == '__main__':
     app.run(debug=True)
